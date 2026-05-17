@@ -1,158 +1,204 @@
 import os
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
-import numpy as np 
 
-run_paths = {
-    "3M Params": "RUN_1(3M)/train_log.csv",
-    "5M Params": "RUN_3(5M)/train_log.csv",
-    "10M Params": "RUN_4(10M)/train_log.csv",
-    "20M Params": "RUN_2(20M)/train_log.csv"
+# --- 1. Configuration & Data Setup ---
+mha_paths = {
+    "3M": "RUN_1(3M)/train_log.csv",
+    "5M": "RUN_3(5M)/train_log.csv",
+    "10M": "RUN_4(10M)/train_log.csv",
+    "20M": "RUN_2(20M)/train_log.csv"
 }
 
-param_counts = {
-    "3M Params": 3.1,
-    "5M Params": 5.12,
-    "10M Params": 10.09,
-    "20M Params": 19.67
+gqa_paths = {
+    #"3M": "RUN_8(3M_GQA)/train_log.csv", # Uncomment this when you have the data!
+    "5M": "RUN_6(5M_GQA)/train_log.csv",
+    "10M": "RUN_5(10M_GQA)/train_log.csv",
+    "20M": "RUN_7(20M_GQA)/train_log.csv"
 }
+
+# Exact parameter counts for math operations
+params_exact = {
+    "3M": 2754688,
+    "5M": 5115072,
+    "10M": 10096896,
+    "20M": 19667328
+}
+params_millions = {k: v / 1_000_000 for k, v in params_exact.items()}
 
 col_names = ['Step', 'Train_Loss', 'Val_Loss', 'LR', 'Time_ms', 'Tok_Sec']
+TOKENS_PER_STEP = 8192  # 32 micro_batch * 256 seq_len
 
 os.makedirs("Visualizations", exist_ok=True)
 
-dataframes = {}
-for label, path in run_paths.items():
-    if os.path.exists(path):
-        dataframes[label] = pd.read_csv(path, names=col_names)
-    else:
-        print(f"⚠️ Warning: Could not find {path}")
+# Helper function to load and process data
+def load_and_process(paths_dict):
+    data = {}
+    for label, path in paths_dict.items():
+        if os.path.exists(path):
+            df = pd.read_csv(path, names=col_names)
+            
+            # Clean data: drop NaN validation losses and step 0 for log plots
+            df_val = df[df['Val_Loss'].notna()].copy()
+            df_val = df_val[df_val['Step'] > 0]
+            
+            # Feature Engineering: Tokens Seen and Compute (FLOPs)
+            # FLOPs formula: C ≈ 6 * N * T
+            df_val['Tokens_Seen'] = df_val['Step'] * TOKENS_PER_STEP
+            df_val['FLOPs'] = 6 * params_exact[label] * df_val['Tokens_Seen']
+            
+            data[label] = df_val
+        else:
+            print(f"Could not find {path}")
+    return data
 
-if not dataframes:
-    print("❌ No data found. Exiting.")
-    exit()
+mha_data = load_and_process(mha_paths)
+gqa_data = load_and_process(gqa_paths)
 
-# --- Plot 1: Validation Loss Learning Curves ---
+colors = {"3M": "#4C72B0", "5M": "#DD8452", "10M": "#55A868", "20M": "#C44E52"}
+
+# ==========================================
+# GRAPH 1: Loss vs Tokens Seen
+# ==========================================
 plt.figure(figsize=(12, 7))
-for label, df in dataframes.items():
-    # Only plot the rows where we actually ran validation (every 200 steps)
-    val_data = df[df['Val_Loss'].notna()]
-    plt.plot(val_data['Step'], val_data['Val_Loss'], label=label, linewidth=2)
+for label, df in mha_data.items():
+    plt.plot(df['Tokens_Seen'], df['Val_Loss'], color=colors[label], linestyle='-', linewidth=2, label=f"MHA {label}")
+for label, df in gqa_data.items():
+    plt.plot(df['Tokens_Seen'], df['Val_Loss'], color=colors[label], linestyle='--', linewidth=2, label=f"GQA {label}")
 
-plt.title('Validation Loss Scaling Law (200M Tokens)', fontsize=16, fontweight='bold')
-plt.xlabel('Training Steps', fontsize=14)
+plt.title('Validation Loss vs. Tokens Seen', fontsize=16, fontweight='bold')
+plt.xlabel('Tokens Seen', fontsize=14)
 plt.ylabel('Validation Loss', fontsize=14)
+plt.legend(fontsize=10, ncol=2)
+plt.grid(True, linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.savefig("Visualizations/1_Loss_vs_Tokens.png", dpi=300)
+
+# ==========================================
+# GRAPH 2: Training Loss vs Compute (FLOPs)
+# ==========================================
+plt.figure(figsize=(12, 7))
+for label, df in mha_data.items():
+    plt.plot(df['FLOPs'], df['Val_Loss'], color=colors[label], linestyle='-', linewidth=2, label=f"MHA {label}")
+for label, df in gqa_data.items():
+    plt.plot(df['FLOPs'], df['Val_Loss'], color=colors[label], linestyle='--', linewidth=2, label=f"GQA {label}")
+
+plt.title('Scaling Law: Loss vs Compute (FLOPs)', fontsize=16, fontweight='bold')
+plt.xlabel('Compute (Total FLOPs)', fontsize=14)
+plt.ylabel('Validation Loss', fontsize=14)
+plt.xscale('log')
+plt.yscale('log')
+plt.grid(True, which="both", linestyle='--', alpha=0.5)
+plt.legend(fontsize=10, ncol=2)
+plt.tight_layout()
+plt.savefig("Visualizations/2_Loss_vs_FLOPs.png", dpi=300)
+
+# ==========================================
+# GRAPH 3: Validation Loss vs Model Size (Pareto)
+# ==========================================
+plt.figure(figsize=(10, 6))
+mha_x, mha_y = [], []
+for label, df in mha_data.items():
+    mha_x.append(params_millions[label])
+    mha_y.append(df['Val_Loss'].iloc[-1])
+
+gqa_x, gqa_y = [], []
+for label, df in gqa_data.items():
+    gqa_x.append(params_millions[label])
+    gqa_y.append(df['Val_Loss'].iloc[-1])
+
+# Plot Empirical Data
+plt.plot(mha_x, mha_y, marker='o', markersize=10, linestyle='-', linewidth=2, color='#4C72B0', label='MHA Baseline')
+if gqa_x: # Ensure we have data to plot
+    plt.plot(gqa_x, gqa_y, marker='*', markersize=14, linestyle='', color='#C44E52', label='GQA Ablation')
+
+# Line of Best Fit (Math Magic) - using MHA for the fit
+if len(mha_x) > 1:
+    slope, intercept = np.polyfit(np.log10(mha_x), np.log10(mha_y), 1)
+    a = 10**intercept
+    x_fit = np.linspace(min(mha_x) * 0.9, max(mha_x) * 1.1, 100)
+    y_fit = a * (x_fit ** slope)
+
+    plt.plot(x_fit, y_fit, color='#DD8452', linestyle='--', linewidth=2, label='Power-Law Fit')
+    plt.text(0.95, 0.95, rf"$Loss = {a:.3f} \cdot s^{{{slope:.3f}}}$", transform=plt.gca().transAxes, 
+             fontsize=14, va='top', ha='right', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+
+plt.title('Pareto Frontier: Final Validation Loss vs. Model Size', fontsize=16, fontweight='bold')
+plt.xlabel('Model Parameters (Millions)', fontsize=14)
+plt.ylabel('Final Validation Loss', fontsize=14)
+plt.xscale('log')
+plt.yscale('log')
+plt.legend(fontsize=12)
+plt.grid(True, which="both", linestyle='--', alpha=0.5)
+plt.tight_layout()
+plt.savefig("Visualizations/3_Loss_vs_Model_Size.png", dpi=300)
+
+# ==========================================
+# GRAPH 4: Perplexity Comparison
+# ==========================================
+plt.figure(figsize=(10, 6))
+mha_ppl = [np.exp(y) for y in mha_y]
+gqa_ppl = [np.exp(y) for y in gqa_y]
+
+plt.plot(mha_x, mha_ppl, marker='o', markersize=10, linestyle='-', linewidth=2, color='#4C72B0', label='MHA Perplexity')
+if gqa_x: # Ensure we have data to plot
+    plt.plot(gqa_x, gqa_ppl, marker='*', markersize=14, linestyle='--', linewidth=2, color='#C44E52', label='GQA Perplexity')
+
+# Annotate points
+for i, txt in enumerate(mha_ppl):
+    plt.annotate(f"{txt:.2f}", (mha_x[i], mha_ppl[i]), textcoords="offset points", xytext=(0,10), ha='center', color='#4C72B0')
+for i, txt in enumerate(gqa_ppl):
+    plt.annotate(f"{txt:.2f}", (gqa_x[i], gqa_ppl[i]), textcoords="offset points", xytext=(0,-15), ha='center', color='#C44E52')
+
+plt.title('Language Fluency: Perplexity vs. Model Size', fontsize=16, fontweight='bold')
+plt.xlabel('Model Parameters (Millions)', fontsize=14)
+plt.ylabel('Final Validation Perplexity (Lower is Better)', fontsize=14)
 plt.legend(fontsize=12)
 plt.grid(True, linestyle='--', alpha=0.7)
 plt.tight_layout()
-plt.savefig("Visualizations/1_Learning_Curves.png", dpi=300)
-print("✅ Saved 1_Learning_Curves.png")
+plt.savefig("Visualizations/4_Perplexity_Comparison.png", dpi=300)
 
-
-# --- Plot 2: Hardware Throughput (M2 Efficiency) ---
+# ==========================================
+# GRAPH 5: Hardware Efficiency (Tokens/Sec)
+# ==========================================
 plt.figure(figsize=(10, 6))
-labels = []
-avg_tps = []
+labels = list(params_millions.keys())
+x = np.arange(len(labels))
+width = 0.35
 
-for label, df in dataframes.items():
-    labels.append(label)
-    # Ignore the first few steps to let throughput stabilize
-    stable_tps = df['Tok_Sec'].iloc[10:].mean()
-    avg_tps.append(stable_tps)
+mha_tps = []
+gqa_tps = []
 
-bars = plt.bar(labels, avg_tps, color=['#4C72B0', '#DD8452', '#55A868', '#C44E52'])
-plt.title('Apple M2 Throughput by Model Size', fontsize=16, fontweight='bold')
-plt.xlabel('Model Architecture', fontsize=14)
+# Safely extract TPS handling missing files gracefully
+for lbl in labels:
+    if lbl in mha_paths and os.path.exists(mha_paths[lbl]):
+        mha_tps.append(pd.read_csv(mha_paths[lbl], names=col_names)['Tok_Sec'].iloc[10:].mean())
+    else:
+        mha_tps.append(0)  # Default to 0 if data isn't collected yet
+        
+    if lbl in gqa_paths and os.path.exists(gqa_paths[lbl]):
+        gqa_tps.append(pd.read_csv(gqa_paths[lbl], names=col_names)['Tok_Sec'].iloc[10:].mean())
+    else:
+        gqa_tps.append(0)  # Default to 0 if data isn't collected yet
+
+bars1 = plt.bar(x - width/2, mha_tps, width, label='MHA', color='#4C72B0')
+bars2 = plt.bar(x + width/2, gqa_tps, width, label='GQA', color='#DD8452')
+
+plt.title('Hardware Efficiency: Tokens Per Second (Apple M2)', fontsize=16, fontweight='bold')
+plt.xlabel('Model Size', fontsize=14)
 plt.ylabel('Average Tokens per Second', fontsize=14)
+plt.xticks(x, labels)
+plt.legend()
 
-# Add the numbers on top of the bars
-for bar in bars:
-    yval = bar.get_height()
-    plt.text(bar.get_x() + bar.get_width()/2, yval + 200, f"{int(yval):,}", ha='center', va='bottom', fontsize=11)
+# Add text labels on bars, skipping 0 heights
+for bar in bars1 + bars2:
+    height = bar.get_height()
+    if height > 0:  # Only annotate bars that exist
+        plt.text(bar.get_x() + bar.get_width()/2, height + 100, f"{int(height)}", ha='center', va='bottom', fontsize=10)
 
 plt.grid(axis='y', linestyle='--', alpha=0.7)
 plt.tight_layout()
-plt.savefig("Visualizations/2_Hardware_Throughput.png", dpi=300)
-print("✅ Saved 2_Hardware_Throughput.png")
+plt.savefig("Visualizations/5_Hardware_Throughput.png", dpi=300)
 
-
-
-
-# --- Plot 3: The Pareto Frontier (Final Loss vs Scale) ---
-plt.figure(figsize=(10, 6))
-x_params = []
-y_final_loss = []
-
-# Gather the data
-for label, df in dataframes.items():
-    x_params.append(param_counts[label])
-    # Grab the very last validation loss recorded
-    final_loss = df['Val_Loss'].iloc[-1]
-    y_final_loss.append(final_loss)
-    
-    # Annotate the specific points
-    plt.annotate(f"{final_loss:.3f}", (param_counts[label], final_loss), 
-                 textcoords="offset points", xytext=(0,10), ha='center')
-
-# 1. Plot the actual empirical data
-plt.plot(x_params, y_final_loss, marker='o', markersize=10, linestyle='-', linewidth=2, color='#4C72B0', label='Empirical Loss')
-
-# 2. THE ONE-LINE MATH FIT: Calculate slope and intercept in log-log space
-slope, intercept = np.polyfit(np.log10(x_params), np.log10(y_final_loss), 1)
-
-# Calculate 'a' (the constant) from the log intercept
-a = 10**intercept
-
-# 3. Generate points for the smooth theoretical dotted line
-x_fit = np.linspace(min(x_params) * 0.9, max(x_params) * 1.1, 100)
-y_fit = a * (x_fit ** slope)
-
-# 4. Plot the dotted power-law fit line
-plt.plot(x_fit, y_fit, color='#DD8452', linestyle='--', linewidth=2, label='Power-Law Fit')
-
-# 5. Add the formula text box in the top right corner
-formula_text = rf"$\mathrm{{Loss}} = {a:.3f} \cdot s^{{{slope:.3f}}}$"
-plt.text(0.95, 0.95, formula_text, transform=plt.gca().transAxes, 
-         fontsize=14, verticalalignment='top', horizontalalignment='right',
-         bbox=dict(boxstyle='round,pad=0.5', facecolor='white', edgecolor='gray', alpha=0.9))
-
-# Chart formatting
-plt.title('Pareto Frontier: Final Loss vs. Parameter Count', fontsize=16, fontweight='bold')
-plt.xlabel('Model Parameters / Scale ($s$) in Millions', fontsize=14)
-plt.ylabel('Final Validation Loss', fontsize=14)
-plt.legend(fontsize=12, loc='lower left')
-plt.grid(True, linestyle='--', alpha=0.7)
-plt.tight_layout()
-
-# Save the updated plot
-plt.savefig("Visualizations/3_Pareto_Frontier.png", dpi=300)
-print("✅ Saved 3_Pareto_Frontier.png (with Power-Law Fit)")
-
-# --- Plot 4: Log-Log Scaling Law (Power Law Emergence) ---
-plt.figure(figsize=(12, 7))
-
-for label, df in dataframes.items():
-    val_data = df[df['Val_Loss'].notna()]
-    
-    # CRITICAL MATH FIX: We must filter out Step 0. 
-    # The logarithm of 0 is mathematically undefined and will crash the plot.
-    val_data = val_data[val_data['Step'] > 0]
-    
-    plt.plot(val_data['Step'], val_data['Val_Loss'], label=label, linewidth=2)
-
-plt.title('Log-Log Validation Loss Scaling Law', fontsize=16, fontweight='bold')
-plt.xlabel('Training Steps (Log Scale)', fontsize=14)
-plt.ylabel('Validation Loss (Log Scale)', fontsize=14)
-
-# This is where the magic happens: converting axes to logarithmic scale
-plt.xscale('log')
-plt.yscale('log')
-
-# Adding minor gridlines helps visualize the log scale intervals
-plt.grid(True, which="both", linestyle='--', alpha=0.5)
-plt.legend(fontsize=12)
-plt.tight_layout()
-plt.savefig("Visualizations/4_LogLog_Learning_Curves.png", dpi=300)
-print("✅ Saved 4_LogLog_Learning_Curves.png")
-
-print("\n🚀 All visualizations successfully generated in the 'Visualizations' folder!")
+print("\n🚀 All 5 comprehensive graphs generated successfully in the 'Visualizations' folder!")
