@@ -12,7 +12,7 @@ mha_paths = {
 }
 
 gqa_paths = {
-    #"3M": "RUN_8(3M_GQA)/train_log.csv", # Uncomment this when you have the data!
+    "3M": "RUN_8(3M_GQA)/train_log.csv", 
     "5M": "RUN_6(5M_GQA)/train_log.csv",
     "10M": "RUN_5(10M_GQA)/train_log.csv",
     "20M": "RUN_7(20M_GQA)/train_log.csv"
@@ -109,27 +109,39 @@ for label, df in gqa_data.items():
     gqa_y.append(df['Val_Loss'].iloc[-1])
 
 # Plot Empirical Data
-plt.plot(mha_x, mha_y, marker='o', markersize=10, linestyle='-', linewidth=2, color='#4C72B0', label='MHA Baseline')
+plt.plot(mha_x, mha_y, marker='o', markersize=10, linestyle='', linewidth=2, color='#4C72B0', label='MHA Baseline')
 if gqa_x: # Ensure we have data to plot
     plt.plot(gqa_x, gqa_y, marker='*', markersize=14, linestyle='', color='#C44E52', label='GQA Ablation')
 
 # Line of Best Fit (Math Magic) - using MHA for the fit
 if len(mha_x) > 1:
-    slope, intercept = np.polyfit(np.log10(mha_x), np.log10(mha_y), 1)
-    a = 10**intercept
-    x_fit = np.linspace(min(mha_x) * 0.9, max(mha_x) * 1.1, 100)
-    y_fit = a * (x_fit ** slope)
+    slope_mha, intercept_mha = np.polyfit(np.log10(mha_x), np.log10(mha_y), 1)
+    a_mha = 10**intercept_mha
+    x_fit_mha = np.linspace(min(mha_x) * 0.9, max(mha_x) * 1.1, 100)
+    y_fit_mha = a_mha * (x_fit_mha ** slope_mha)
 
-    plt.plot(x_fit, y_fit, color='#DD8452', linestyle='--', linewidth=2, label='Power-Law Fit')
-    plt.text(0.95, 0.95, rf"$Loss = {a:.3f} \cdot s^{{{slope:.3f}}}$", transform=plt.gca().transAxes, 
-             fontsize=14, va='top', ha='right', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9))
+    plt.plot(x_fit_mha, y_fit_mha, color='#4C72B0', linestyle='--', linewidth=2, label='MHA Power-Law Fit')
+    plt.text(0.95, 0.95, rf"MHA: $Loss = {a_mha:.3f} \cdot s^{{{slope_mha:.3f}}}$", transform=plt.gca().transAxes, 
+             fontsize=13, va='top', ha='right', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#4C72B0'))
+
+# Line of Best Fit (Math Magic) - using GQA for the fit
+if len(gqa_x) > 1:
+    slope_gqa, intercept_gqa = np.polyfit(np.log10(gqa_x), np.log10(gqa_y), 1)
+    a_gqa = 10**intercept_gqa
+    x_fit_gqa = np.linspace(min(gqa_x) * 0.9, max(gqa_x) * 1.1, 100)
+    y_fit_gqa = a_gqa * (x_fit_gqa ** slope_gqa)
+
+    plt.plot(x_fit_gqa, y_fit_gqa, color='#C44E52', linestyle='--', linewidth=2, label='GQA Power-Law Fit')
+    # Offset the text slightly below the MHA text box
+    plt.text(0.95, 0.85, rf"GQA: $Loss = {a_gqa:.3f} \cdot s^{{{slope_gqa:.3f}}}$", transform=plt.gca().transAxes, 
+             fontsize=13, va='top', ha='right', bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#C44E52'))
 
 plt.title('Pareto Frontier: Final Validation Loss vs. Model Size', fontsize=16, fontweight='bold')
 plt.xlabel('Model Parameters (Millions)', fontsize=14)
 plt.ylabel('Final Validation Loss', fontsize=14)
 plt.xscale('log')
 plt.yscale('log')
-plt.legend(fontsize=12)
+plt.legend(fontsize=11, loc='lower left')
 plt.grid(True, which="both", linestyle='--', alpha=0.5)
 plt.tight_layout()
 plt.savefig("Visualizations/3_Loss_vs_Model_Size.png", dpi=300)
