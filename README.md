@@ -104,7 +104,7 @@ Inference throughput exhibited universal deceleration for GQA models on MPS due 
 
 ## Running Inference
 
-First download the desired model from the Releases then put that in its respective checkpoints folder
+First download the model weights from the Releases unzip it then put the desired model .pt in its respective checkpoints folder
 
 ```python
 # Change this one line to switch between all 8 models
