@@ -1,3 +1,5 @@
+# The graph generating scripts is all written by me through AI for visualisation of the training logs
+
 import os
 import pandas as pd
 import numpy as np
@@ -214,3 +216,122 @@ plt.tight_layout()
 plt.savefig("Visualizations/5_Hardware_Throughput.png", dpi=300)
 
 print("\n🚀 All 5 comprehensive graphs generated successfully in the 'Visualizations' folder!")
+# ==========================================
+# GRAPH 6: Throughput Distribution Boxplots
+# ==========================================
+def plot_throughput_boxplots():
+    plt.figure(figsize=(10, 6))
+    labels = list(params_millions.keys())
+    
+    mha_data_box = []
+    gqa_data_box = []
+    
+    for lbl in labels:
+        if lbl in mha_paths and os.path.exists(mha_paths[lbl]):
+            df = pd.read_csv(mha_paths[lbl], names=col_names)
+            mha_data_box.append(df[df['Step'] > 0]['Tok_Sec'].values)
+        else:
+            mha_data_box.append([])
+            
+        if lbl in gqa_paths and os.path.exists(gqa_paths[lbl]):
+            df = pd.read_csv(gqa_paths[lbl], names=col_names)
+            gqa_data_box.append(df[df['Step'] > 0]['Tok_Sec'].values)
+        else:
+            gqa_data_box.append([])
+
+    x = np.arange(len(labels))
+    width = 0.35
+    
+    bp1 = plt.boxplot(mha_data_box, positions=x - width/2, widths=width, patch_artist=True,
+                      boxprops=dict(facecolor='#4C72B0', alpha=0.8),
+                      medianprops=dict(color='white', linewidth=2),
+                      flierprops=dict(marker='o', markerfacecolor='#4C72B0', markersize=4, alpha=0.5))
+                      
+    bp2 = plt.boxplot(gqa_data_box, positions=x + width/2, widths=width, patch_artist=True,
+                      boxprops=dict(facecolor='#DD8452', alpha=0.8),
+                      medianprops=dict(color='white', linewidth=2),
+                      flierprops=dict(marker='o', markerfacecolor='#DD8452', markersize=4, alpha=0.5))
+
+    # Legend
+    plt.plot([], [], color='#4C72B0', linewidth=8, label='MHA')
+    plt.plot([], [], color='#DD8452', linewidth=8, label='GQA')
+
+    plt.title('Throughput Distribution (MHA vs GQA)', fontsize=16, fontweight='bold')
+    plt.xlabel('Model Size', fontsize=14)
+    plt.ylabel('Tokens per Second (Tok_Sec)', fontsize=14)
+    plt.xticks(x, labels)
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig("Visualizations/6_Throughput_Boxplots.png", dpi=300)
+    plt.close()
+
+# ==========================================
+# GRAPH 7: Rolling Average Loss Gap
+# ==========================================
+def plot_rolling_loss_gap():
+    plt.figure(figsize=(12, 7))
+    if "20M" in mha_paths and os.path.exists(mha_paths["20M"]):
+        df = pd.read_csv(mha_paths["20M"], names=col_names)
+        df = df[df['Step'] > 0]
+        
+        # Raw Val Loss
+        plt.plot(df['Step'], df['Val_Loss'], color='#4C72B0', linestyle='-', linewidth=2, label='Val_Loss (Raw)')
+        
+        # 10-step moving average of Train_Loss
+        train_roll_mean = df['Train_Loss'].rolling(window=10, min_periods=1).mean()
+        train_roll_std = df['Train_Loss'].rolling(window=10, min_periods=1).std().fillna(0)
+        
+        plt.plot(df['Step'], train_roll_mean, color='#C44E52', linestyle='-', linewidth=2, label='Train_Loss (10-Step Moving Average)')
+        plt.fill_between(df['Step'], 
+                         train_roll_mean - train_roll_std, 
+                         train_roll_mean + train_roll_std, 
+                         color='#C44E52', alpha=0.2, label='Train_Loss (10-Step Std Dev)')
+
+        plt.title('Rolling Average Loss Gap - RUN_2(20M)', fontsize=16, fontweight='bold')
+        plt.xlabel('Training Steps', fontsize=14)
+        plt.ylabel('Loss', fontsize=14)
+        plt.legend(fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
+        plt.savefig("Visualizations/7_Rolling_Loss_Gap.png", dpi=300)
+        plt.close()
+
+# ==========================================
+# GRAPH 8: Execution Time Spike RUN_4
+# ==========================================
+def plot_execution_spike():
+    if "10M" in mha_paths and os.path.exists(mha_paths["10M"]):
+        df = pd.read_csv(mha_paths["10M"], names=col_names)
+        df = df[(df['Step'] >= 16000) & (df['Step'] <= 20000)]
+        
+        fig, ax1 = plt.subplots(figsize=(12, 7))
+        
+        color1 = '#C44E52'
+        ax1.set_xlabel('Training Steps', fontsize=14)
+        ax1.set_ylabel('Execution Time (ms)', fontsize=14, color=color1)
+        line1 = ax1.plot(df['Step'], df['Time_ms'], color=color1, marker='o', linestyle='-', linewidth=2, label='Time_ms')
+        ax1.tick_params(axis='y', labelcolor=color1)
+        ax1.grid(True, linestyle='--', alpha=0.7)
+        
+        ax2 = ax1.twinx()
+        color2 = '#4C72B0'
+        ax2.set_ylabel('Validation Loss', fontsize=14, color=color2)
+        line2 = ax2.plot(df['Step'], df['Val_Loss'], color=color2, marker='s', linestyle='--', linewidth=2, label='Val_Loss')
+        ax2.tick_params(axis='y', labelcolor=color2)
+        
+        lines = line1 + line2
+        labels = [l.get_label() for l in lines]
+        ax1.legend(lines, labels, loc='upper right', fontsize=12)
+
+        plt.title('Execution Time Spike - RUN_4(10M MHA) [Steps 16000-20000]', fontsize=16, fontweight='bold')
+        fig.tight_layout()
+        plt.savefig("Visualizations/8_RUN4_Execution_Spike.png", dpi=300)
+        plt.close()
+
+# Execute new functions
+plot_throughput_boxplots()
+plot_rolling_loss_gap()
+plot_execution_spike()
+
+print("\n🚀 3 new visualizations generated successfully in the 'Visualizations' folder!")
